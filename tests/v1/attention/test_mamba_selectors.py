@@ -4,16 +4,35 @@
 
 import pytest
 
-from vllm.v1.attention.backends.mamba2_attn import Mamba2AttentionBackend
+from vllm.model_executor.layers.mamba.mamba_mixer import MambaMixer
+from vllm.v1.attention.backends.mamba1_attn import Mamba1AttentionBackend
 from vllm.v1.attention.backends.mamba_selectors import get_mamba_attn_backend
 
 
-@pytest.mark.parametrize(argnames=["mamba_type", "expected_backend"],
-                         argvalues=[("mamba2", Mamba2AttentionBackend)])
-def test_get_mamba_attn_backend_mamba2(mamba_type, expected_backend):
-    backend_class = get_mamba_attn_backend(mamba_type)
-
-    assert backend_class is expected_backend
+# TODO: add other mamba layer types
+@pytest.mark.parametrize(argnames=[
+    "layer_cls", "mamba_kwargs", "expected_backend", "expected_mamba_type"
+],
+                         argvalues=[(
+                             MambaMixer,
+                             dict(
+                                 hidden_size=128,
+                                 ssm_state_size=16,
+                                 conv_kernel_size=4,
+                                 intermediate_size=256,
+                                 time_step_rank=8,
+                                 use_conv_bias=True,
+                                 use_bias=False,
+                                 use_rms_norm=True,
+                             ),
+                             Mamba1AttentionBackend,
+                             "mamba1",
+                         )])
+def test_get_mamba_attn_backend_mamba(dist_init, layer_cls, mamba_kwargs,
+                                      expected_backend, expected_mamba_type):
+    layer = layer_cls(**mamba_kwargs)
+    assert expected_backend == layer.get_attn_backend()
+    assert layer.mamba_type == expected_mamba_type
 
 
 def test_get_mamba_attn_backend_unsupported():
