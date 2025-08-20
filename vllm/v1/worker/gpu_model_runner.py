@@ -54,7 +54,6 @@ from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, DeviceMemoryProfiler,
                         GiB_bytes, LazyLoader, cdiv, check_use_alibi,
                         get_dtype_size, is_pin_memory_available, round_up,
                         supports_dynamo)
-from vllm.v1.attention.backends.mamba_selectors import get_mamba_attn_backend
 from vllm.v1.attention.backends.utils import (
     AttentionCGSupport, AttentionMetadataBuilder, CommonAttentionMetadata,
     make_kv_sharing_fast_prefill_attention_metadata,
@@ -2750,8 +2749,10 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         attn_layers = get_layers_from_vllm_config(self.vllm_config, Attention)
 
         def get_attn_backends_for_layers(
-                layer_names: list[str]
+            layer_names: list[str],
+            layer_type: Attention | MambaBase,
         ) -> dict[type[AttentionBackend], list[str]]:
+            layers = get_layers_from_vllm_config(self.vllm_config, layer_type)
             attn_backends = {}
             attn_backend_layers = defaultdict(list)
             # Dedupe based on full class name; this is a bit safer than using
@@ -2760,7 +2761,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             # they are cached correctly, there will be different objects per
             # layer.
             for layer_name in layer_names:
-                attn_backend = attn_layers[layer_name].get_attn_backend()
+                attn_backend = layers[layer_name].get_attn_backend()
                 key = attn_backend.full_cls_name()
                 attn_backends[key] = attn_backend
                 attn_backend_layers[key].append(layer_name)
@@ -2789,20 +2790,18 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
 
         for kv_cache_group_spec in kv_cache_config.kv_cache_groups:
             kv_cache_spec = kv_cache_group_spec.kv_cache_spec
+            attn_type: Optional[MambaBase | Attention] = None
             if isinstance(kv_cache_spec, AttentionSpec):
-                attn_backends = get_attn_backends_for_layers(
-                    kv_cache_group_spec.layer_names)
-            # TODO(lucas): move `get_mamba_attn_backend` into the mamba
-            # layers like above
+                attn_type = Attention
             elif isinstance(kv_cache_spec, MambaSpec):
-                attn_backends = {
-                    get_mamba_attn_backend(kv_cache_spec.mamba_type):
-                    kv_cache_group_spec.layer_names
-                }
+                # TODO: finish implementing for Mamba besides mamba1
+                attn_type = MambaBase
             else:
                 raise ValueError(
                     f"Unknown KV cache spec type: {type(kv_cache_spec)}")
 
+            attn_backends = get_attn_backends_for_layers(
+                kv_cache_group_spec.layer_names, attn_type)
             self.attn_groups.append(
                 create_attn_groups(attn_backends, kv_cache_spec))
 
@@ -2843,7 +2842,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             total_layers = 0
             for attn_spec, layer_names in attn_specs.items():
 
-                attn_backends = get_attn_backends_for_layers(layer_names)
+                attn_backends = get_attn_backends_for_layers(
+                    layer_names, Attention)
                 total_layers += len(layer_names)
 
                 self.attn_groups.append(

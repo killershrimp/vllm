@@ -27,7 +27,8 @@ from vllm.model_executor.layers.mamba.ops.mamba_ssm import (
     selective_scan_fn, selective_state_update)
 from vllm.model_executor.models.mamba_cache import MambaCacheParams
 from vllm.model_executor.utils import set_weight_attrs
-from vllm.v1.attention.backends.mamba1_attn import Mamba1AttentionMetadata
+from vllm.v1.attention.backends.mamba1_attn import (Mamba1AttentionBackend,
+                                                    Mamba1AttentionMetadata)
 
 
 # Adapted from transformers.models.mamba.modeling_mamba.MambaMixer
@@ -372,6 +373,9 @@ class MambaMixer(MambaBase, CustomOp):
             out = self.out_proj(scan_outputs_combined.transpose(-2, -1))[0]
 
         return out
+
+    def get_attn_backend(self) -> type:
+        return Mamba1AttentionBackend
 
     def get_state_dtype(self) -> tuple[torch.dtype]:
         assert self.model_config is not None
